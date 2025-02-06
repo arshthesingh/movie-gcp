@@ -3,18 +3,20 @@ from pydantic import BaseModel
 import os
 from robust_movie_recommender import MovieRecommender
 
-# Set up paths for your CSV and embeddings file.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CSV_PATH = os.path.join(BASE_DIR, "combiniedmovies_2.csv")  # adjust the filename if needed
+CSV_PATH = os.path.join(BASE_DIR, "combiniedmovies_2.csv")
 EMBEDDINGS_PATH = os.path.join(BASE_DIR, "overview_embeddings.npy")
 
 app = FastAPI(title="Movie Recommendation ML Service")
 
-# Instantiate the recommender as a global object.
-# (If you use lazy-loading inside the recommender, this won’t load heavy resources until needed.)
-recommender = MovieRecommender(CSV_PATH, EMBEDDINGS_PATH, device="cpu", use_faiss=True)
+recommender = None  # Global placeholder
 
-# Define the request model using Pydantic.
+@app.on_event("startup")
+async def startup_event():
+    global recommender
+    # Initialize the recommender here after the server has started.
+    recommender = MovieRecommender(CSV_PATH, EMBEDDINGS_PATH, device="cpu", use_faiss=True)
+
 class RecommendationRequest(BaseModel):
     title: str
     top_n: int = 5
@@ -25,6 +27,8 @@ class RecommendationRequest(BaseModel):
 
 @app.post("/recommend", summary="Get movie recommendations")
 def get_recommendations(request: RecommendationRequest):
+    if recommender is None:
+        raise HTTPException(status_code=503, detail="Service is starting up, try again later")
     try:
         recs = recommender.recommend(
             movie_title=request.title,
@@ -40,8 +44,4 @@ def get_recommendations(request: RecommendationRequest):
     if not recs:
         raise HTTPException(status_code=404, detail=f"No recommendations found for '{request.title}'")
     
-    # Return a list of dictionaries with movie titles and their scores.
     return {"recommendations": [{"title": title, "score": score} for title, score in recs]}
-
-# To run this service, use:
-#   uvicorn main:app --host 0.0.0.0 --port 8000
